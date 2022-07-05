@@ -4,8 +4,12 @@ This file conducts a KNN baseline of the model
 
 """
 
+import copy
+import argparse
 import pickle
 import numpy as np
+from functools import partial
+import itertools
 from typing import List
 from pathlib import Path
 import json
@@ -15,6 +19,7 @@ from sklearn.feature_extraction.text import CountVectorizer
 import math
 from rdkit import Chem
 from rdkit.Chem import AllChem, DataStructs
+import multiprocessing as mp
 
 class KMERFeaturizer(object):
     """KMERFeaturizer.
@@ -98,10 +103,10 @@ class MorganFeaturizer(object):
 class KNNModel(object): 
     """ KNNModel """
 
-    def __init__(self, n=3, seq_dist_weight=1, comp_dist_weight=1): 
+    def __init__(self, n=3, seq_dist_weight=5, comp_dist_weight=1):
         self.n = n
-        self.seq_dist_weight=seq_dist_weight
-        self.comp_dist_weight=comp_dist_weight
+        self.seq_dist_weight = seq_dist_weight
+        self.comp_dist_weight = comp_dist_weight
 
     def cosine_dist(self, train_objs, test_objs): 
         """ compute cosine_dist """
@@ -114,10 +119,7 @@ class KNNModel(object):
         denominator[denominator == 0] = 1e-12
         cos_dist = 1 - numerator / denominator
 
-
-
         return cos_dist
-
 
     def fit(self, train_seqs, train_comps, train_vals, 
             val_seqs, val_comps, val_vals) -> None: 
@@ -130,8 +132,8 @@ class KNNModel(object):
 
     def predict(self, test_seqs, test_comps) -> np.ndarray:
         # Compute test dists
-        test_seq_dists =  self.cosine_dist(self.train_seqs, test_seqs)
-        test_comp_dists =  self.cosine_dist(self.train_comps, test_comps)
+        test_seq_dists = self.cosine_dist(self.train_seqs, test_seqs)
+        test_comp_dists = self.cosine_dist(self.train_comps, test_comps)
         total_dists = self.seq_dist_weight * test_seq_dists + self.comp_dist_weight * test_comp_dists
 
         smallest_dists = np.argsort(total_dists, 0)
@@ -151,10 +153,50 @@ def split_dataset(dataset, ratio):
     dataset_1, dataset_2 = dataset[:n], dataset[n:]
     return dataset_1, dataset_2
 
+
+def single_trial(model_params, train_data, dev_data, test_data):
+    """ Conduct a single trial with given model params """
+
+    # Unpack data
+    train_seq_feats, train_sub_feats, train_vals = train_data
+    dev_seq_feats, dev_sub_feats, dev_vals = dev_data
+    test_seq_feats, test_sub_feats, test_vals = test_data
+
+    # Create model
+    knn_model = KNNModel(**model_params)
+
+    knn_model.fit(train_seq_feats, train_sub_feats, train_vals,
+                  dev_seq_feats, dev_sub_feats, dev_vals)
+
+    inds = np.arange(len(test_seq_feats))
+    num_splits = min(50, len(inds))
+    ars = np.array_split(inds, num_splits)
+    ar_vec = []
+    for ar in ars:
+        test_preds = knn_model.predict(test_seq_feats[ar], test_sub_feats[ar])
+        ar_vec.append(test_preds)
+    test_preds = np.concatenate(ar_vec)
+
+    # Evaluation
+    true_vals_corrected = np.log10(np.power(2, test_vals))
+    predicted_vals_corrected = np.log10(np.power(2, test_preds))
+    SAE = np.abs(predicted_vals_corrected - true_vals_corrected)
+    MAE = np.mean(SAE) 
+    RMSE = np.sqrt((SAE ** 2).mean())
+    results = dict(mae=MAE, rmse=RMSE)
+
+    outputs = {}
+    outputs.update(model_params)
+    outputs.update(results)
+    return outputs
+
+
+
 if __name__ == "__main__":
     """Load data."""
 
     debug = False
+    hyperopt = False
 
     # Parse preprocessed data
     dir_input = Path('../../Data/database/Kcat_combination_0918.json')
@@ -162,7 +204,7 @@ if __name__ == "__main__":
         json_obj = json.load(fp)
 
     if debug: 
-        json_obj=json_obj[:500]
+        json_obj = json_obj[:500]
 
     # Parse it out; code taken  from preprocess_all.py
     # Need to extract morgan FP's and kmer feature vector  
@@ -206,26 +248,63 @@ if __name__ == "__main__":
     dev_seq_feats = np.vstack(seq_featurizer.featurize(dev_seqs))
     test_seq_feats = np.vstack(seq_featurizer.featurize(test_seqs))
 
-    print("Running model")
-    knn_model = KNNModel()
-    knn_model.fit(train_seq_feats, train_sub_feats, train_vals, 
-                  dev_seq_feats, dev_sub_feats, dev_vals)
+    if hyperopt:
+        train_data = (train_seq_feats, train_sub_feats, train_vals)
+        dev_data = (dev_seq_feats, dev_sub_feats, dev_vals)
+        test_data = (test_seq_feats, test_sub_feats, test_vals)
 
-    inds = np.arange(len(test_seq_feats))
-    num_splits = min(200, len(inds))
-    ars = np.array_split(inds, num_splits)
-    ar_vec = []
-    for ar in tqdm(ars): 
-        test_preds = knn_model.predict(test_seq_feats[ar], test_sub_feats[ar])
-        ar_vec.append(test_preds)
-    test_preds = np.concatenate(ar_vec)
 
-    # Evaluation
-    print("Conducting evaluation")
-    true_vals_corrected = np.log10(np.power(2, test_vals))
-    predicted_vals_corrected = np.log10(np.power(2, test_preds))
-    SAE = np.abs(predicted_vals_corrected - true_vals_corrected)
-    MAE = np.mean(SAE) 
-    RMSE = np.sqrt((SAE ** 2).mean())
-    print(f"MAE: {MAE}")
-    print(f"RMSE: {RMSE}")
+        # Make parameter grid
+        model_params = {"n": [1, 3, 5, 10],
+                        "seq_dist_weight": [1, 5, 10],
+                        "comp_dist_weight": [1, 5, 10]
+                        }
+
+        key, values = zip(*model_params.items())
+        combos = [dict(zip(key, val_combo))
+                  for val_combo in itertools.product(*values)
+                  ]
+        trial_fn = partial(single_trial, train_data=train_data, 
+                           dev_data=dev_data, test_data=test_data)
+
+        print("Starting grid sweep")
+        # Not parallel
+        #res_list = []
+        #for model_param in combos:
+        #    out_results = trial_fn(model_param)
+        #    res_list.append(out_results)
+
+        # Parallel
+        with mp.Pool(16) as p:
+            res_list = list(tqdm(p.imap(trial_fn, combos),
+                                 total=len(combos)))
+
+        res = json.dumps(res_list, indent=2)
+        print(res)
+        with open("out.json", "w") as fp:
+            fp.write(res)
+
+    else:
+        print("Running model")
+
+        knn_model = KNNModel()
+        knn_model.fit(train_seq_feats, train_sub_feats, train_vals, 
+                      dev_seq_feats, dev_sub_feats, dev_vals)
+        inds = np.arange(len(test_seq_feats))
+        num_splits = min(50, len(inds))
+        ars = np.array_split(inds, num_splits)
+        ar_vec = []
+        for ar in tqdm(ars):
+            test_preds = knn_model.predict(test_seq_feats[ar], test_sub_feats[ar])
+            ar_vec.append(test_preds)
+        test_preds = np.concatenate(ar_vec)
+
+        # Evaluation
+        print("Conducting evaluation")
+        true_vals_corrected = np.log10(np.power(2, test_vals))
+        predicted_vals_corrected = np.log10(np.power(2, test_preds))
+        SAE = np.abs(predicted_vals_corrected - true_vals_corrected)
+        MAE = np.mean(SAE) 
+        RMSE = np.sqrt((SAE ** 2).mean())
+        print(f"MAE: {MAE}")
+        print(f"RMSE: {RMSE}")
