@@ -15,7 +15,7 @@ This can be accomplished by installing conda as per the directions below and
 simply running `Code/model/run_knn.py`. Note that two flags appear in the code
 for both debugging and running hyperparameter grid sweep in parallel.
 
-The resulting MAE and RMSE are 0.7029  and 1.061 respectively. This outperforms
+The resulting MAE and RMSE are 0.729  and 1.061 respectively. This outperforms
 the best deep learning model originally presented, which at epoch 18, achieved 
 test MAE 0.7448 and RMSE 1.0911843.
 
