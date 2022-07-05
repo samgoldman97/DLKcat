@@ -12,9 +12,12 @@ The goal of this repository is to run a simple KNN baseline to see if in fact
 something was learned by the deep learning model presented.  
 
 This can be accomplished by installing conda as per the directions below and
-simply running `Code/model/run_knn.py`   
+simply running `Code/model/run_knn.py`. Note that two flags appear in the code
+for both debugging and running hyperparameter grid sweep in parallel.
 
-The resulting MAE and RMSE are [] and [] respectively.  
+The resulting MAE and RMSE are 0.7029  and 1.061 respectively. This outperforms
+the best deep learning model originally presented, which at epoch 18, achieved 
+test MAE 0.7448 and RMSE 1.0911843.
 
 Note that Figure 2B and 2C apply the trained model on both the training and 
 validation set, so I have choosen not to replicate this.  
