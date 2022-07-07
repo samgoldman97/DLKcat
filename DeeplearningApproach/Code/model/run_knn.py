@@ -16,6 +16,7 @@ import json
 from tqdm import tqdm
 from collections import defaultdict
 from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.metrics import r2_score
 import math
 from rdkit import Chem
 from rdkit.Chem import AllChem, DataStructs
@@ -168,26 +169,40 @@ def single_trial(model_params, train_data, dev_data, test_data):
     knn_model.fit(train_seq_feats, train_sub_feats, train_vals,
                   dev_seq_feats, dev_sub_feats, dev_vals)
 
-    inds = np.arange(len(test_seq_feats))
-    num_splits = min(50, len(inds))
-    ars = np.array_split(inds, num_splits)
-    ar_vec = []
-    for ar in ars:
-        test_preds = knn_model.predict(test_seq_feats[ar], test_sub_feats[ar])
-        ar_vec.append(test_preds)
-    test_preds = np.concatenate(ar_vec)
 
-    # Evaluation
-    true_vals_corrected = np.log10(np.power(2, test_vals))
-    predicted_vals_corrected = np.log10(np.power(2, test_preds))
-    SAE = np.abs(predicted_vals_corrected - true_vals_corrected)
-    MAE = np.mean(SAE) 
-    RMSE = np.sqrt((SAE ** 2).mean())
-    results = dict(mae=MAE, rmse=RMSE)
-
+    # Conduct analysis on val and test set
     outputs = {}
     outputs.update(model_params)
-    outputs.update(results)
+    for dataset, seq_feats, sub_feats, targs in zip(["val", "test"],
+                                                    [dev_seq_feats, test_seq_feats],
+                                                    [dev_sub_feats, test_sub_feats],
+                                                    [dev_vals, test_vals]):
+
+        inds = np.arange(len(seq_feats))
+        num_splits = min(50, len(inds))
+        ars = np.array_split(inds, num_splits)
+        ar_vec = []
+        for ar in ars:
+            test_preds = knn_model.predict(seq_feats[ar], sub_feats[ar])
+            ar_vec.append(test_preds)
+
+        test_preds = np.concatenate(ar_vec)
+
+        # Evaluation
+        true_vals_corrected = np.log10(np.power(2, targs))
+        predicted_vals_corrected = np.log10(np.power(2, test_preds))
+        SAE = np.abs(predicted_vals_corrected - true_vals_corrected)
+        MAE = np.mean(SAE)
+        r2 = r2_score(predicted_vals_corrected, true_vals_corrected)
+        RMSE = np.sqrt((SAE ** 2).mean())
+
+        results = {
+            f"{dataset}_mae": MAE,
+            f"{dataset}_RMSE": RMSE,
+            f"{dataset}_r2": r2
+        }
+
+        outputs.update(results)
     return outputs
 
 
@@ -195,19 +210,23 @@ def single_trial(model_params, train_data, dev_data, test_data):
 if __name__ == "__main__":
     """Load data."""
 
-    debug = False
-    hyperopt = False
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--debug", default=False, action="store_true")
+    parser.add_argument("--hyperopt", default=False, action="store_true")
+    args = parser.parse_args()
+    debug = args.debug
+    hyperopt = args.hyperopt
 
     # Parse preprocessed data
     dir_input = Path('../../Data/database/Kcat_combination_0918.json')
     with open(dir_input, "r") as fp:
         json_obj = json.load(fp)
 
-    if debug: 
+    if debug:
         json_obj = json_obj[:500]
 
     # Parse it out; code taken  from preprocess_all.py
-    # Need to extract morgan FP's and kmer feature vector  
+    # Need to extract morgan FP's and kmer feature vector
     i = 0
     seqs, subs, vals = [], [], []
     for data in tqdm(json_obj):
@@ -268,6 +287,7 @@ if __name__ == "__main__":
                            dev_data=dev_data, test_data=test_data)
 
         print("Starting grid sweep")
+
         # Not parallel
         #res_list = []
         #for model_param in combos:
@@ -306,5 +326,7 @@ if __name__ == "__main__":
         SAE = np.abs(predicted_vals_corrected - true_vals_corrected)
         MAE = np.mean(SAE) 
         RMSE = np.sqrt((SAE ** 2).mean())
+        r2 = r2_score(test_vals, test_preds)
         print(f"MAE: {MAE}")
         print(f"RMSE: {RMSE}")
+        print(f"R2: {r2}")
