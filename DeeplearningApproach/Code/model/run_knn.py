@@ -21,6 +21,7 @@ import math
 from rdkit import Chem
 from rdkit.Chem import AllChem, DataStructs
 import multiprocessing as mp
+from scipy import stats
 
 class KMERFeaturizer(object):
     """KMERFeaturizer.
@@ -327,6 +328,8 @@ if __name__ == "__main__":
         MAE = np.mean(SAE) 
         RMSE = np.sqrt((SAE ** 2).mean())
         r2 = r2_score(test_vals, test_preds)
+        correlation, p_value = stats.pearsonr(test_vals, test_preds)
         print(f"MAE: {MAE}")
         print(f"RMSE: {RMSE}")
         print(f"R2: {r2}")
+        print(f"R: {correlation}")

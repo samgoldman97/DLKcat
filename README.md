@@ -19,6 +19,15 @@ The resulting MAE and RMSE are 0.729  and 1.061 respectively. This outperforms
 the best deep learning model originally presented, which at epoch 18, achieved 
 test MAE 0.7448 and RMSE 1.0911843.
 
+
+Full test results for knn model:   
+- MAE: 0.7294039122271005  
+- RMSE: 1.061312130660432  
+- R2: 0.5007774473667256  
+- r: 0.7172485526900177  
+
+
+
 Note that Figure 2B and 2C apply the trained model on both the training and 
 validation set, so I have choosen not to replicate this.  
 
