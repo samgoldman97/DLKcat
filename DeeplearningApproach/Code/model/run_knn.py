@@ -14,14 +14,18 @@ from pathlib import Path
 from functools import partial
 
 import numpy as np
+import pandas as pd
 from tqdm import tqdm
 from scipy import stats
 from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.metrics import r2_score
+from sklearn.metrics import r2_score, mean_squared_error
 
 from rdkit import Chem
 from rdkit.Chem import AllChem, DataStructs
 
+import matplotlib.pyplot as plt
+from matplotlib import rc
+import seaborn as sns
 
 class KMERFeaturizer:
     """KMERFeaturizer."""
@@ -98,7 +102,7 @@ class MorganFeaturizer:
 
 class KNNModel:
     """KNNModel"""
-    def __init__(self, n=3, seq_dist_weight=5, comp_dist_weight=1):
+    def __init__(self, n=3, seq_dist_weight=5, comp_dist_weight=1, **kwargs):
         self.n = n
         self.seq_dist_weight = seq_dist_weight
         self.comp_dist_weight = comp_dist_weight
@@ -218,6 +222,65 @@ def get_args():
     args = parser.parse_args()
     return args
 
+def make_scatter(df, title="scatter_all.pdf"): 
+    """make_scatter"""
+    experimental_values, predicted_values = df['kcat'].values, df['pred'].values
+    correlation, p_value = stats.pearsonr(experimental_values, predicted_values)
+
+    r2 = r2_score(experimental_values, predicted_values)
+    rmse = np.sqrt(mean_squared_error(experimental_values, predicted_values))
+
+    allData = pd.DataFrame(list(zip(experimental_values, predicted_values)))
+    allData.columns = ['Experimental value', 'Predicted value']
+
+    plt.figure(figsize=(1.5,1.5))
+
+    # To solve the 'Helvetica' font cannot be used in PDF file
+    # https://stackoverflow.com/questions/59845568/the-pdf-backend-does-not-currently-support-the-selected-font
+    # rc('text', usetex=True) 
+    rc('font',**{'family':'serif','serif':['Helvetica']})
+    plt.rcParams['pdf.fonttype'] = 42
+    # plt.rc('text', usetex=True)
+
+    plt.axes([0.12,0.12,0.83,0.83])
+
+    plt.tick_params(direction='in')
+    plt.tick_params(which='major',length=1.5)
+    plt.tick_params(which='major',width=0.4)
+
+    kcat_values_vstack = np.vstack([experimental_values, predicted_values])
+    experimental_predicted = stats.gaussian_kde(kcat_values_vstack)(kcat_values_vstack)
+
+    ax = plt.scatter(x=experimental_values, y=predicted_values, 
+                     c=experimental_predicted, s=3, edgecolor=[])
+
+    cbar = plt.colorbar(ax)
+    cbar.ax.tick_params(labelsize=6)
+    cbar.set_label('Density', size=7)
+
+    plt.text(-4.7, 6.9, f'r = {correlation:.2f}', fontweight ="normal", fontsize=6)
+    plt.text(-4.7, 5.9, f'P value = {p_value:.2E}', fontweight ="normal", fontsize=6)
+    plt.text(-4.7, 4.8, f'N = {len(experimental_values)}', fontweight ="normal", fontsize=6)
+
+    plt.rcParams['font.family'] = 'Helvetica'
+
+    plt.xlabel("Experimental $k$$_\mathregular{cat}$ value", fontdict={'weight': 'normal', 'fontname': 'Helvetica', 'size': 7}, fontsize=7)
+    plt.ylabel('Predicted $k$$_\mathregular{cat}$ value',fontdict={'weight': 'normal', 'fontname': 'Helvetica', 'size': 7},fontsize=7)
+
+    plt.xticks([-6, -4, -2, 0, 2, 4, 6, 8])
+    plt.yticks([-6, -4, -2, 0, 2, 4, 6, 8])
+
+    plt.xticks(fontsize=6)
+    plt.yticks(fontsize=6)
+
+    ax = plt.gca()
+    ax.spines['bottom'].set_linewidth(0.5)
+    ax.spines['left'].set_linewidth(0.5)
+    ax.spines['top'].set_linewidth(0.5)
+    ax.spines['right'].set_linewidth(0.5)
+
+    plt.savefig(title, dpi=400, bbox_inches='tight')
+
 
 def main():
     # args
@@ -225,6 +288,7 @@ def main():
     debug = args.debug
     hyperopt = args.hyperopt
     workers = args.workers
+
 
     # Parse preprocessed data
     dir_input = Path("../../Data/database/Kcat_combination_0918.json")
@@ -237,15 +301,13 @@ def main():
     # Parse data and split exactly as in DLKCat
     # Need to extract morgan FP's and kmer feature vector
     i = 0
-    seqs, subs, vals, ec = [], [], [], []
+    seqs, subs, vals, ecs = [], [], [], []
     for data in tqdm(json_obj):
         smiles = data["Smiles"]
         sequence = data["Sequence"]
         # print(smiles)
         Kcat = data["Value"]
         ec = data['ECNumber']
-        import pdb
-        pdb.set_trace()
         if "." not in smiles and float(Kcat) > 0:
             seqs.append(sequence)
             subs.append(smiles)
@@ -293,6 +355,7 @@ def main():
     train_seq_feats = np.vstack(seq_featurizer.featurize(train_seqs))
     dev_seq_feats = np.vstack(seq_featurizer.featurize(dev_seqs))
     test_seq_feats = np.vstack(seq_featurizer.featurize(test_seqs))
+    knn_params = {"n": 3, "seq_dist_weight": 5, "comp_dist_weight": 1}
 
     if hyperopt:
         train_data = (train_seq_feats, train_sub_feats, train_vals)
@@ -323,60 +386,70 @@ def main():
             res_list = list(tqdm(p.imap(trial_fn, combos), total=len(combos)))
 
         res = json.dumps(res_list, indent=2)
-        print(res)
-        with open("out.json", "w") as fp:
+        with open("knn_hyperopt_out.json", "w") as fp:
             fp.write(res)
+        # Set best params
+        knn_params = sorted(res_list, key=lambda x: x['val_mae'])[0]
+        print(f"Setting model params to best hyperopt:\n{json.dumps(knn_params,indent=2)}")
 
-    else:
-        print("Running model")
+    print("Running model")
 
-        knn_model = KNNModel()
-        knn_model.fit(
-            train_seq_feats,
-            train_sub_feats,
-            train_vals,
-            dev_seq_feats,
-            dev_sub_feats,
-            dev_vals,
-        )
-        inds = np.arange(len(test_seq_feats))
-        num_splits = min(50, len(inds))
-        ars = np.array_split(inds, num_splits)
-        ar_vec = []
-        for ar in tqdm(ars):
-            test_preds = knn_model.predict(test_seq_feats[ar],
-                                           test_sub_feats[ar])
-            ar_vec.append(test_preds)
-        test_preds = np.concatenate(ar_vec)
+    knn_model = KNNModel(**knn_params)
+    knn_model.fit(
+        train_seq_feats,
+        train_sub_feats,
+        train_vals,
+        dev_seq_feats,
+        dev_sub_feats,
+        dev_vals,
+    )
+    inds = np.arange(len(test_seq_feats))
+    num_splits = min(100, len(inds))
+    ars = np.array_split(inds, num_splits)
+    ar_vec = []
+    for ar in tqdm(ars):
+        test_preds = knn_model.predict(test_seq_feats[ar],
+                                       test_sub_feats[ar])
+        ar_vec.append(test_preds)
+    test_preds = np.concatenate(ar_vec)
 
-        # Evaluation
-        print("Conducting evaluation")
-        true_vals_corrected = np.log10(np.power(2, test_vals))
-        predicted_vals_corrected = np.log10(np.power(2, test_preds))
-        SAE = np.abs(predicted_vals_corrected - true_vals_corrected)
-        MAE = np.mean(SAE)
-        RMSE = np.sqrt((SAE**2).mean())
-        r2 = r2_score(test_vals, test_preds)
-        correlation, p_value = stats.pearsonr(test_vals, test_preds)
+    # Evaluation
+    print("Conducting evaluation")
+    true_vals_corrected = np.log10(np.power(2, test_vals))
+    predicted_vals_corrected = np.log10(np.power(2, test_preds))
+    SAE = np.abs(predicted_vals_corrected - true_vals_corrected)
+    MAE = np.mean(SAE)
+    RMSE = np.sqrt((SAE**2).mean())
+    r2 = r2_score(test_vals, test_preds)
+    correlation, p_value = stats.pearsonr(test_vals, test_preds)
 
-        # Dump outputs to file
-        outputs = {
-            "MAE": MAE,
-            "RMSE": RMSE,
-            "R2": r2,
-            "R": correlation
-        }
-        print(json.dumps(outputs, indent=2))
+    # Dump outputs to file
+    outputs = { "MAE": MAE, "RMSE": RMSE, "R2": r2, "R": correlation}
+    print(json.dumps(outputs, indent=2))
 
-        for seq, 
+    # Get all entries where test is in train where test is in train 
+    train_subs_set, train_seqs_set = set(train_subs), set(train_seqs)
+    sub_in_train = np.array([i in train_subs_set for i in test_subs])
+    seq_in_train = np.array([i in train_seqs_set for i in test_seqs])
+    output_data = list(
+        zip(test_seqs, test_subs, true_vals_corrected, 
+            predicted_vals_corrected, test_ecs, sub_in_train, 
+            seq_in_train)
+    )
+    index = ["seqs", "subs", "kcat", "pred", "ec", 
+             "sub_in_train", "seq_in_train"]
+    df = pd.DataFrame(output_data, columns=index)
+    df.to_csv("knn_test_preds.tsv", sep="\t")
 
-        # Du
+    # Make scatter
+    #df = pd.read_csv("knn_test_preds.tsv", sep="\t")
+    make_scatter(df, title="test_scatter.pdf")
 
-
-        output_data = list(
-            zip(test_seqs, test_subs, true_vals_corrected, 
-                test_ecs, predicted_vals_corrected)
-        )
+    # Create subset where either seq or sub not in train
+    df_subset = df[np.logical_or(~df['seq_in_train'].values,
+                                 ~df['sub_in_train'].values,)
+                   ]
+    make_scatter(df_subset, title="test_scatter_subset.pdf")
 
 if __name__ == "__main__":
     main()
