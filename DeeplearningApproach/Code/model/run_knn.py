@@ -272,6 +272,7 @@ def make_scatter(df, title="scatter_all.pdf"):
     ax.spines['right'].set_linewidth(0.5)
 
     plt.savefig(title, dpi=400, bbox_inches='tight')
+    plt.close()
 
 def get_args():
     """get_args."""
@@ -365,9 +366,9 @@ def main():
 
         # Make parameter grid
         model_params = {
-            "n": [1, 3, 5, 10],
+            "n": [2, 3, 4, 5],
             "seq_dist_weight": [1, 5, 10],
-            "comp_dist_weight": [1, 5, 10],
+            "comp_dist_weight": [1, 3, 5],
         }
 
         key, values = zip(*model_params.items())
@@ -431,8 +432,13 @@ def main():
 
         # Get all entries where test is in train where test is in train 
         train_subs_set, train_seqs_set = set(train_subs), set(train_seqs)
-        sub_in_train = np.array([i in train_subs_set for i in test_subs])
-        seq_in_train = np.array([i in train_seqs_set for i in test_seqs])
+        dev_subs_set, dev_seqs_set = set(dev_subs), set(dev_seqs)
+        sub_in_train = np.array([i in train_subs_set or 
+                                 i in dev_subs_set
+                                 for i in test_subs])
+        seq_in_train = np.array([i in train_seqs_set or 
+                                 i in dev_seqs_set
+                                 for i in test_seqs])
         output_data = list(
             zip(test_seqs, test_subs, true_vals_corrected, 
                 predicted_vals_corrected, test_ecs, sub_in_train, 
@@ -441,17 +447,23 @@ def main():
         index = ["seqs", "subs", "kcat", "pred", "ec", 
                  "sub_in_train", "seq_in_train"]
         df = pd.DataFrame(output_data, columns=index)
+
+        # Make ec sub levels
+        for ec_level in [1,2,3,4]:
+            ec_sub_num = [i.rsplit(".", 4 - ec_level)[0] for i in df['ec'].values]
+            df[f'ec_{ec_level}'] = ec_sub_num
         df.to_csv("knn_test_preds.tsv", sep="\t")
 
     # Make scatter
     df = pd.read_csv("knn_test_preds.tsv", sep="\t")
-    make_scatter(df, title="test_scatter.pdf")
 
+    make_scatter(df, title="test_scatter.pdf")
     # Create subset where either seq or sub not in train
     df_subset = df[np.logical_or(~df['seq_in_train'].values,
                                  ~df['sub_in_train'].values,)
                    ]
     make_scatter(df_subset, title="test_scatter_subset.pdf")
+    ## 
 
 if __name__ == "__main__":
     main()
