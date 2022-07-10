@@ -213,14 +213,6 @@ def single_trial(model_params, train_data, dev_data, test_data):
     return outputs
 
 
-def get_args():
-    """get_args."""
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--debug", default=False, action="store_true")
-    parser.add_argument("--hyperopt", default=False, action="store_true")
-    parser.add_argument("--workers", default=1, type=int)
-    args = parser.parse_args()
-    return args
 
 def make_scatter(df, title="scatter_all.pdf"): 
     """make_scatter"""
@@ -281,6 +273,15 @@ def make_scatter(df, title="scatter_all.pdf"):
 
     plt.savefig(title, dpi=400, bbox_inches='tight')
 
+def get_args():
+    """get_args."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--debug", default=False, action="store_true")
+    parser.add_argument("--hyperopt", default=False, action="store_true")
+    parser.add_argument("--run-model", default=False, action="store_true")
+    parser.add_argument("--workers", default=1, type=int)
+    args = parser.parse_args()
+    return args
 
 def main():
     # args
@@ -288,7 +289,7 @@ def main():
     debug = args.debug
     hyperopt = args.hyperopt
     workers = args.workers
-
+    run_model= args.run_model
 
     # Parse preprocessed data
     dir_input = Path("../../Data/database/Kcat_combination_0918.json")
@@ -392,57 +393,58 @@ def main():
         knn_params = sorted(res_list, key=lambda x: x['val_mae'])[0]
         print(f"Setting model params to best hyperopt:\n{json.dumps(knn_params,indent=2)}")
 
-    print("Running model")
+    if run_model:
+        print("Running model")
 
-    knn_model = KNNModel(**knn_params)
-    knn_model.fit(
-        train_seq_feats,
-        train_sub_feats,
-        train_vals,
-        dev_seq_feats,
-        dev_sub_feats,
-        dev_vals,
-    )
-    inds = np.arange(len(test_seq_feats))
-    num_splits = min(100, len(inds))
-    ars = np.array_split(inds, num_splits)
-    ar_vec = []
-    for ar in tqdm(ars):
-        test_preds = knn_model.predict(test_seq_feats[ar],
-                                       test_sub_feats[ar])
-        ar_vec.append(test_preds)
-    test_preds = np.concatenate(ar_vec)
+        knn_model = KNNModel(**knn_params)
+        knn_model.fit(
+            train_seq_feats,
+            train_sub_feats,
+            train_vals,
+            dev_seq_feats,
+            dev_sub_feats,
+            dev_vals,
+        )
+        inds = np.arange(len(test_seq_feats))
+        num_splits = min(100, len(inds))
+        ars = np.array_split(inds, num_splits)
+        ar_vec = []
+        for ar in tqdm(ars):
+            test_preds = knn_model.predict(test_seq_feats[ar],
+                                           test_sub_feats[ar])
+            ar_vec.append(test_preds)
+        test_preds = np.concatenate(ar_vec)
 
-    # Evaluation
-    print("Conducting evaluation")
-    true_vals_corrected = np.log10(np.power(2, test_vals))
-    predicted_vals_corrected = np.log10(np.power(2, test_preds))
-    SAE = np.abs(predicted_vals_corrected - true_vals_corrected)
-    MAE = np.mean(SAE)
-    RMSE = np.sqrt((SAE**2).mean())
-    r2 = r2_score(test_vals, test_preds)
-    correlation, p_value = stats.pearsonr(test_vals, test_preds)
+        # Evaluation
+        print("Conducting evaluation")
+        true_vals_corrected = np.log10(np.power(2, test_vals))
+        predicted_vals_corrected = np.log10(np.power(2, test_preds))
+        SAE = np.abs(predicted_vals_corrected - true_vals_corrected)
+        MAE = np.mean(SAE)
+        RMSE = np.sqrt((SAE**2).mean())
+        r2 = r2_score(test_vals, test_preds)
+        correlation, p_value = stats.pearsonr(test_vals, test_preds)
 
-    # Dump outputs to file
-    outputs = { "MAE": MAE, "RMSE": RMSE, "R2": r2, "R": correlation}
-    print(json.dumps(outputs, indent=2))
+        # Dump outputs to file
+        outputs = { "MAE": MAE, "RMSE": RMSE, "R2": r2, "R": correlation}
+        print(json.dumps(outputs, indent=2))
 
-    # Get all entries where test is in train where test is in train 
-    train_subs_set, train_seqs_set = set(train_subs), set(train_seqs)
-    sub_in_train = np.array([i in train_subs_set for i in test_subs])
-    seq_in_train = np.array([i in train_seqs_set for i in test_seqs])
-    output_data = list(
-        zip(test_seqs, test_subs, true_vals_corrected, 
-            predicted_vals_corrected, test_ecs, sub_in_train, 
-            seq_in_train)
-    )
-    index = ["seqs", "subs", "kcat", "pred", "ec", 
-             "sub_in_train", "seq_in_train"]
-    df = pd.DataFrame(output_data, columns=index)
-    df.to_csv("knn_test_preds.tsv", sep="\t")
+        # Get all entries where test is in train where test is in train 
+        train_subs_set, train_seqs_set = set(train_subs), set(train_seqs)
+        sub_in_train = np.array([i in train_subs_set for i in test_subs])
+        seq_in_train = np.array([i in train_seqs_set for i in test_seqs])
+        output_data = list(
+            zip(test_seqs, test_subs, true_vals_corrected, 
+                predicted_vals_corrected, test_ecs, sub_in_train, 
+                seq_in_train)
+        )
+        index = ["seqs", "subs", "kcat", "pred", "ec", 
+                 "sub_in_train", "seq_in_train"]
+        df = pd.DataFrame(output_data, columns=index)
+        df.to_csv("knn_test_preds.tsv", sep="\t")
 
     # Make scatter
-    #df = pd.read_csv("knn_test_preds.tsv", sep="\t")
+    df = pd.read_csv("knn_test_preds.tsv", sep="\t")
     make_scatter(df, title="test_scatter.pdf")
 
     # Create subset where either seq or sub not in train
