@@ -235,17 +235,21 @@ def main():
     # Parse data and split exactly as in DLKCat
     # Need to extract morgan FP's and kmer feature vector
     i = 0
-    seqs, subs, vals = [], [], []
+    seqs, subs, vals, ec = [], [], [], []
     for data in tqdm(json_obj):
         smiles = data["Smiles"]
         sequence = data["Sequence"]
         # print(smiles)
         Kcat = data["Value"]
+        ec = data['ECNumber']
+        import pdb
+        pdb.set_trace()
         if "." not in smiles and float(Kcat) > 0:
             seqs.append(sequence)
             subs.append(smiles)
             vals.append(math.log2(float(Kcat)))
-    seqs, subs, vals = np.array(seqs), np.array(subs), np.array(vals)
+            ecs.append(ec)
+    seqs, subs, vals, ecs = np.array(seqs), np.array(subs), np.array(vals), np.array(ecs)
 
     # Shuffle for split (as in DLKCat)
     dataset = np.arange(len(seqs))
@@ -254,20 +258,23 @@ def main():
     dataset_dev, dataset_test = split_dataset(dataset_, 0.5)
 
     # Split data itself
-    train_seqs, train_subs, train_vals = (
+    train_seqs, train_subs, train_vals, dev_ecs = (
         seqs[dataset_train],
         subs[dataset_train],
         vals[dataset_train],
+        ecs[dataset_train]
     )
-    dev_seqs, dev_subs, dev_vals = (
+    dev_seqs, dev_subs, dev_vals, dev_ecs = (
         seqs[dataset_dev],
         subs[dataset_dev],
         vals[dataset_dev],
+        ecs[dataset_dev]
     )
-    test_seqs, test_subs, test_vals = (
+    test_seqs, test_subs, test_vals, test_ecs = (
         seqs[dataset_test],
         subs[dataset_test],
         vals[dataset_test],
+        ecs[dataset_test]
     )
 
     # Featurize compounds with morgan fingerprints
@@ -354,6 +361,10 @@ def main():
         print(f"R2: {r2}")
         print(f"R: {correlation}")
 
+        output_data = list(
+            zip(test_seqs, test_subs, true_vals_corrected, 
+                test_ecs, predicted_vals_corrected)
+        )
 
 if __name__ == "__main__":
     main()
