@@ -214,6 +214,7 @@ def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--debug", default=False, action="store_true")
     parser.add_argument("--hyperopt", default=False, action="store_true")
+    parser.add_argument("--workers", default=1, type=int)
     args = parser.parse_args()
     return args
 
@@ -223,6 +224,7 @@ def main():
     args = get_args()
     debug = args.debug
     hyperopt = args.hyperopt
+    workers = args.workers
 
     # Parse preprocessed data
     dir_input = Path("../../Data/database/Kcat_combination_0918.json")
@@ -310,7 +312,7 @@ def main():
         print("Starting grid sweep")
 
         # Parallel
-        with mp.Pool(16) as p:
+        with mp.Pool(workers) as p:
             res_list = list(tqdm(p.imap(trial_fn, combos), total=len(combos)))
 
         res = json.dumps(res_list, indent=2)
@@ -349,10 +351,20 @@ def main():
         RMSE = np.sqrt((SAE**2).mean())
         r2 = r2_score(test_vals, test_preds)
         correlation, p_value = stats.pearsonr(test_vals, test_preds)
-        print(f"MAE: {MAE}")
-        print(f"RMSE: {RMSE}")
-        print(f"R2: {r2}")
-        print(f"R: {correlation}")
+
+        # Dump outputs to file
+        outputs = {
+            "MAE": MAE,
+            "RMSE": RMSE,
+            "R2": r2,
+            "R": correlation
+        }
+        print(json.dumps(outputs, indent=2))
+
+        for seq, 
+
+        # Du
+
 
 
 if __name__ == "__main__":
